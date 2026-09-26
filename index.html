@@ -481,6 +481,12 @@
             margin-top: 8px;
         }
     </style>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="통합 대시보드">
+    <link rel="apple-touch-icon" href="icons/icon-180.png">
 </head>
 <body>
 
@@ -887,7 +893,18 @@
             const body = '25분 공부가 끝났습니다! 수고했어요.';
             if ('Notification' in window && Notification.permission === 'granted') {
                 try {
-                    new Notification(title, { body: body, tag: 'study-timer-complete' });
+                    if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+                        navigator.serviceWorker.ready.then(reg => {
+                            if (reg.showNotification) {
+                                return reg.showNotification(title, { body: body, tag: 'study-timer-complete' });
+                            }
+                            return new Notification(title, { body: body, tag: 'study-timer-complete' });
+                        }).catch(() => {
+                            try { new Notification(title, { body: body, tag: 'study-timer-complete' }); } catch (_) {}
+                        });
+                    } else {
+                        new Notification(title, { body: body, tag: 'study-timer-complete' });
+                    }
                 } catch (e) {
                     alert(body);
                 }
@@ -1609,6 +1626,12 @@
         function init() {
             updateClock();
             applyModeAndTheme();
+        }
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./service-worker.js').catch(() => {});
+            });
         }
 
         init();
