@@ -529,6 +529,101 @@
         <div class="modal" id="modal-content"></div>
     </div>
 
+    <!-- Firebase Web Push setup -->
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js"></script>
+    <script>
+        // Firebase 콘솔에서 받은 값으로 교체하세요.
+        const FIREBASE_CONFIG = {
+            apiKey: "YOUR_FIREBASE_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.firebasestorage.app",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_FIREBASE_APP_ID"
+        };
+        // Firebase Console > Project settings > Cloud Messaging > Web Push certificates
+        const FIREBASE_VAPID_KEY = "YOUR_PUBLIC_VAPID_KEY";
+
+        let firebaseApp = null;
+        let firebaseDb = null;
+        let firebaseMessaging = null;
+        let firebaseAuth = null;
+        let firebaseReady = false;
+        let firebaseSwRegistration = null;
+
+        function firebaseConfigured() {
+            return FIREBASE_CONFIG.apiKey && !FIREBASE_CONFIG.apiKey.startsWith('YOUR_') &&
+                   FIREBASE_CONFIG.projectId && !FIREBASE_CONFIG.projectId.startsWith('YOUR_') &&
+                   FIREBASE_VAPID_KEY && !FIREBASE_VAPID_KEY.startsWith('YOUR_');
+        }
+
+        async function initFirebasePush() {
+            if (!firebaseConfigured() || !window.firebase) return false;
+            try {
+                firebaseApp = firebase.initializeApp(FIREBASE_CONFIG);
+                firebaseAuth = firebase.auth();
+                firebaseDb = firebase.firestore();
+                firebaseMessaging = firebase.messaging();
+                firebaseSwRegistration = await navigator.serviceWorker.ready;
+                if (!firebaseAuth.currentUser) await firebaseAuth.signInAnonymously();
+                firebaseReady = true;
+                return true;
+            } catch (e) {
+                console.warn('Firebase Push 초기화 실패:', e);
+                return false;
+            }
+        }
+
+        async function getFirebasePushToken() {
+            if (!firebaseReady) {
+                const ok = await initFirebasePush();
+                if (!ok) return null;
+            }
+            try {
+                return await firebaseMessaging.getToken({
+                    vapidKey: FIREBASE_VAPID_KEY,
+                    serviceWorkerRegistration: firebaseSwRegistration
+                });
+            } catch (e) {
+                console.warn('FCM 토큰 발급 실패:', e);
+                return null;
+            }
+        }
+
+        async function scheduleStudyPush(dueAtMs) {
+            const token = await getFirebasePushToken();
+            if (!token || !firebaseDb || !firebaseAuth.currentUser) return false;
+            const uid = firebaseAuth.currentUser.uid;
+            const jobId = `${uid}_${Date.now()}`;
+            try {
+                await firebaseDb.collection('timerJobs').doc(jobId).set({
+                    uid, token, dueAt: firebase.firestore.Timestamp.fromMillis(dueAtMs),
+                    title: '공부 타이머 완료', body: '25분 공부가 끝났습니다! 수고했어요.',
+                    url: './', sent: false, cancelled: false, createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                localStorage.setItem('studyPushJobId', jobId);
+                return true;
+            } catch (e) {
+                console.warn('공부 알림 예약 실패:', e);
+                return false;
+            }
+        }
+
+        async function cancelStudyPush() {
+            if (!firebaseDb) return;
+            const jobId = localStorage.getItem('studyPushJobId');
+            if (!jobId) return;
+            try { await firebaseDb.collection('timerJobs').doc(jobId).update({cancelled: true}); } catch (_) {}
+            localStorage.removeItem('studyPushJobId');
+        }
+
+        window.addEventListener('load', () => {
+            if ('serviceWorker' in navigator) initFirebasePush();
+        });
+    </script>
     <script>
         const DEFAULT_DATA = {
             appMode: 'student',
@@ -879,6 +974,7 @@
             }
             try {
                 const permission = await Notification.requestPermission();
+                if (permission === 'granted') await initFirebasePush();
                 updateStudyTimerUI();
                 return permission === 'granted';
             } catch (e) {
@@ -926,18 +1022,19 @@
             timerRemainingSec = newRemaining;
             updateStudyTimerUI();
             if (newRemaining <= 0) {
-                stopTimer();
+                stopTimer(false);
                 timerRemainingSec = 0;
                 updateStudyTimerUI();
                 notifyStudyComplete();
             }
         }
 
-        function stopTimer() {
+        function stopTimer(cancelPush = true) {
             if (timerInterval) clearInterval(timerInterval);
             timerInterval = null;
             isRunning = false;
             timerEndAt = 0;
+            if (cancelPush && timerMode === 'study') cancelStudyPush().catch(() => {});
         }
 
         async function startStudyTimer() {
@@ -951,6 +1048,8 @@
             timerLastRemainingSec = timerRemainingSec;
             timerEndAt = Date.now() + (timerRemainingSec * 1000);
             isRunning = true;
+            // 백그라운드에서도 완료 알림을 받을 수 있도록 Firebase에 종료 시각을 등록합니다.
+            scheduleStudyPush(timerEndAt).catch(() => {});
             updateStudyTimerUI();
             if (timerInterval) clearInterval(timerInterval);
             timerInterval = setInterval(syncStudyTimer, 500);

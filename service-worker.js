@@ -1,3 +1,36 @@
+// Firebase Cloud Messaging (FCM) background push support.
+importScripts('https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js');
+
+const FIREBASE_CONFIG = {
+  apiKey: 'YOUR_FIREBASE_API_KEY',
+  authDomain: 'YOUR_PROJECT_ID.firebaseapp.com',
+  projectId: 'YOUR_PROJECT_ID',
+  storageBucket: 'YOUR_PROJECT_ID.firebasestorage.app',
+  messagingSenderId: 'YOUR_MESSAGING_SENDER_ID',
+  appId: 'YOUR_FIREBASE_APP_ID'
+};
+
+let fcmMessaging = null;
+try {
+  if (FIREBASE_CONFIG.apiKey && !FIREBASE_CONFIG.apiKey.startsWith('YOUR_')) {
+    firebase.initializeApp(FIREBASE_CONFIG);
+    fcmMessaging = firebase.messaging();
+    fcmMessaging.onBackgroundMessage(payload => {
+      const data = payload.data || {};
+      self.registration.showNotification(data.title || '공부 타이머 완료', {
+        body: data.body || '25분 공부가 끝났습니다! 수고했어요.',
+        tag: data.tag || 'study-timer-complete',
+        icon: './icons/icon-192.png',
+        badge: './icons/icon-192.png',
+        data: { url: data.url || './' }
+      });
+    });
+  }
+} catch (e) {
+  // Firebase 설정 전에는 일반 PWA 서비스 워커만 동작합니다.
+}
+
 const CACHE_NAME = 'vibe-dashboard-pwa-v1';
 const APP_SHELL = [
   './',
